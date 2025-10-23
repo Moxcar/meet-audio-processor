@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meet Audio Processor - Transcripción en Tiempo Real</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🎤 Meet Audio Processor</h1>
+        <p>Transcripción en tiempo real de Google Meet</p>
+      </header>
+
+      <main>
+        <div class="connection-panel">
+          <div class="input-group">
+            <label for="meetingUrl">URL de Google Meet:</label>
+            <input
+              type="url"
+              id="meetingUrl"
+              placeholder="https://meet.google.com/xxx-xxxx-xxx"
+              required
+            />
+          </div>
+
+          <div class="input-group">
+            <label for="languageSelect">Idioma de transcripción:</label>
+            <select id="languageSelect" class="language-select">
+              <option value="auto">Auto-detectar</option>
+              <option value="en-US">English (US)</option>
+              <option value="es-ES">Español (España)</option>
+              <option value="es-MX">Español (México)</option>
+              <option value="es-AR">Español (Argentina)</option>
+              <option value="fr-FR">Français</option>
+              <option value="de-DE">Deutsch</option>
+              <option value="pt-BR">Português (Brasil)</option>
+              <option value="it-IT">Italiano</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label for="botName">Nombre del bot:</label>
+            <input
+              type="text"
+              id="botName"
+              placeholder="Transcription Bot"
+              value="Transcription Bot"
+            />
+          </div>
+
+          <div class="input-group">
+            <label for="botPhoto">Imagen del bot (opcional):</label>
+            <div class="file-upload-container">
+              <input
+                type="file"
+                id="botPhoto"
+                accept="image/jpeg,image/jpg"
+                class="file-input"
+              />
+              <label for="botPhoto" class="file-upload-label">
+                <span class="file-upload-text">Seleccionar imagen JPEG</span>
+                <span class="file-upload-icon">📁</span>
+              </label>
+              <div id="filePreview" class="file-preview" style="display: none">
+                <img id="previewImage" src="" alt="Preview" />
+                <button type="button" id="removeImage" class="remove-image-btn">
+                  ✕
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <button id="connectBtn" class="btn-primary">
+            <span class="btn-text">Conectar Bot</span>
+            <span class="btn-loading" style="display: none">Conectando...</span>
+          </button>
+
+          <div id="connectionStatus" class="status-indicator">
+            <span class="status-dot"></span>
+            <span class="status-text">Desconectado</span>
+          </div>
+        </div>
+
+        <div class="transcription-panel">
+          <div class="transcription-header">
+            <h2>📝 Transcripción en Tiempo Real</h2>
+            <div class="transcription-controls">
+              <button id="clearBtn" class="btn-secondary">Limpiar</button>
+              <button id="scrollBtn" class="btn-secondary">
+                Auto-scroll: ON
+              </button>
+              <button id="debugBtn" class="btn-secondary">Debug Info</button>
+            </div>
+          </div>
+
+          <div id="transcriptionArea" class="transcription-area">
+            <div class="transcription-placeholder">
+              <p>
+                Ingresa una URL de Google Meet y haz clic en "Conectar Bot" para
+                comenzar la transcripción
+              </p>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <footer>
+        <p>Powered by Recall.ai & Socket.io</p>
+      </footer>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
