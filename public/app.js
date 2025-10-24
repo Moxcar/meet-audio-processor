@@ -47,6 +47,18 @@ function setupEventListeners() {
   // Debug button
   debugBtn.addEventListener("click", showDebugInfo);
 
+  // Add cleanup button functionality
+  const cleanupBtn = document.getElementById("cleanupBtn");
+  if (cleanupBtn) {
+    cleanupBtn.addEventListener("click", cleanupOrphanedSessions);
+  }
+
+  // Add bot status check functionality
+  const statusBtn = document.getElementById("statusBtn");
+  if (statusBtn) {
+    statusBtn.addEventListener("click", checkBotStatus);
+  }
+
   // File upload events
   botPhotoInput.addEventListener("change", handleFileSelect);
   removeImageBtn.addEventListener("click", removeSelectedImage);
@@ -67,15 +79,21 @@ function setupEventListeners() {
     currentBotId = data.botId;
     updateConnectionStatus("connecting");
     showMessage(
-      "Bot creado exitosamente. Esperando conexión a la reunión...",
+      "Bot creado exitosamente usando Meeting Captions. Esperando conexión a la reunión...",
       "success"
+    );
+
+    // Show language configuration info for meeting captions
+    showMessage(
+      "Nota: Meeting Captions usa el idioma configurado en la reunión. Asegúrate de que el host tenga configurado el idioma correcto.",
+      "info"
     );
 
     // Set timeout to check if bot connects within 30 seconds
     setTimeout(() => {
       if (connectionStatus.classList.contains("connecting")) {
         showMessage(
-          "El bot está tardando en conectarse. Verifica que la reunión esté activa.",
+          "El bot está tardando en conectarse. Verifica que la reunión esté activa y que las captions estén habilitadas.",
           "warning"
         );
       }
@@ -96,7 +114,7 @@ function setupEventListeners() {
     if (data.status === "in_call") {
       updateConnectionStatus("connected");
       showMessage(
-        "Bot conectado a la reunión. Comenzando transcripción...",
+        "Bot conectado a la reunión. Comenzando transcripción con Meeting Captions...",
         "success"
       );
     } else if (data.status === "call_ended") {
@@ -161,6 +179,8 @@ function handleConnect() {
           "Bot creado exitosamente. Esperando conexión a la reunión...",
           "success"
         );
+
+        // Bot photo is now set during bot creation, no need for separate call
 
         // Set timeout to check if bot connects within 30 seconds
         setTimeout(() => {
@@ -296,31 +316,82 @@ function displayTranscription(data) {
     data.type === "transcript.partial_data" ? "partial" : "final"
   }`;
 
-  // Extract speaker and text from transcript data according to Recall.ai format
-  const speaker =
-    data.transcript.participant?.name ||
-    `Speaker ${data.transcript.participant?.id || "Unknown"}`;
-  const text = data.transcript.words?.map((w) => w.text).join(" ") || "";
-  const timestamp = formatTimestamp(data.timestamp);
+  // Handle meeting captions format
+  let speaker, text, timestamp;
 
-  transcriptItem.innerHTML = `
+  if (data.provider === "meeting_captions") {
+    // Meeting captions format: data.transcript is an array of participants
+    if (Array.isArray(data.transcript)) {
+      // Process each participant's words
+      data.transcript.forEach((participant) => {
+        if (participant.words && participant.words.length > 0) {
+          const participantName =
+            participant.participant?.name ||
+            `Speaker ${participant.participant?.id || "Unknown"}`;
+
+          participant.words.forEach((word) => {
+            const wordItem = document.createElement("div");
+            wordItem.className = `transcript-item ${
+              data.type === "transcript.partial_data" ? "partial" : "final"
+            }`;
+
+            wordItem.innerHTML = `
+              <div class="transcript-speaker">${participantName}</div>
+              <div class="transcript-text">${word.text}</div>
+              <div class="transcript-timestamp">${formatTimestamp(
+                word.start_timestamp?.absolute || data.timestamp
+              )}</div>
+            `;
+
+            transcriptionArea.appendChild(wordItem);
+          });
+        }
+      });
+    } else {
+      // Fallback for other formats
+      speaker =
+        data.transcript.participant?.name ||
+        `Speaker ${data.transcript.participant?.id || "Unknown"}`;
+      text = data.transcript.words?.map((w) => w.text).join(" ") || "";
+      timestamp = formatTimestamp(data.timestamp);
+
+      transcriptItem.innerHTML = `
         <div class="transcript-speaker">${speaker}</div>
         <div class="transcript-text">${text}</div>
         <div class="transcript-timestamp">${timestamp}</div>
-    `;
+      `;
+      transcriptionArea.appendChild(transcriptItem);
+    }
+  } else {
+    // Original format for other providers
+    speaker =
+      data.transcript.participant?.name ||
+      `Speaker ${data.transcript.participant?.id || "Unknown"}`;
+    text = data.transcript.words?.map((w) => w.text).join(" ") || "";
+    timestamp = formatTimestamp(data.timestamp);
 
-  transcriptionArea.appendChild(transcriptItem);
+    transcriptItem.innerHTML = `
+      <div class="transcript-speaker">${speaker}</div>
+      <div class="transcript-text">${text}</div>
+      <div class="transcript-timestamp">${timestamp}</div>
+    `;
+    transcriptionArea.appendChild(transcriptItem);
+  }
 
   // Auto-scroll to bottom
   if (autoScroll) {
-    transcriptItem.scrollIntoView({ behavior: "smooth" });
+    const lastItem = transcriptionArea.lastElementChild;
+    if (lastItem) {
+      lastItem.scrollIntoView({ behavior: "smooth" });
+    }
   }
 }
 
 function clearTranscription() {
   transcriptionArea.innerHTML = `
         <div class="transcription-placeholder">
-            <p>Ingresa una URL de Google Meet y haz clic en "Conectar Bot" para comenzar la transcripción</p>
+            <p>Ingresa una URL de Google Meet y haz clic en "Conectar Bot" para comenzar la transcripción con Meeting Captions</p>
+            <p><small>Nota: Asegúrate de que las captions estén habilitadas en la reunión</small></p>
         </div>
     `;
 }
@@ -387,16 +458,75 @@ function showDebugInfo() {
     .then((response) => response.json())
     .then((data) => {
       console.log("Debug info:", data);
-      showMessage(
-        `Bots activos: ${data.totalBots}. Revisa la consola para más detalles.`,
-        "info"
-      );
+      console.log("Active bots:", data.activeBots);
+      console.log("Connected sockets:", data.connectedSockets);
+
+      let message = `Bots activos: ${data.totalBots}, Sockets conectados: ${data.totalConnectedSockets}`;
+
+      if (data.activeBots.length > 0) {
+        message +=
+          "\nBots: " +
+          data.activeBots
+            .map(
+              (bot) =>
+                `${bot.botId.substring(0, 8)} (socket: ${
+                  bot.socketConnected ? "conectado" : "desconectado"
+                })`
+            )
+            .join(", ");
+      }
+
+      showMessage(message, "info");
     })
     .catch((error) => {
       console.error("Error getting debug info:", error);
       showMessage("Error obteniendo información de debug", "error");
     });
 }
+
+function cleanupOrphanedSessions() {
+  fetch("/debug/cleanup", { method: "POST" })
+    .then((response) => response.json())
+    .then((data) => {
+      console.log("Cleanup result:", data);
+      showMessage(
+        `Limpieza completada. Sesiones removidas: ${data.removedSessions}`,
+        "success"
+      );
+    })
+    .catch((error) => {
+      console.error("Error cleaning up sessions:", error);
+      showMessage("Error limpiando sesiones", "error");
+    });
+}
+
+function checkBotStatus() {
+  if (!currentBotId) {
+    showMessage("No hay bot activo para verificar", "warning");
+    return;
+  }
+
+  fetch(`/api/bot/${currentBotId}/status`)
+    .then((response) => response.json())
+    .then((data) => {
+      console.log("Bot status:", data);
+
+      let message = `Bot: ${data.status}`;
+      if (data.hasOutputVideo) {
+        message += `\n✅ Imagen configurada correctamente`;
+      } else {
+        message += `\n❌ Sin imagen configurada`;
+      }
+
+      showMessage(message, data.hasOutputVideo ? "success" : "warning");
+    })
+    .catch((error) => {
+      console.error("Error checking bot status:", error);
+      showMessage("Error verificando estado del bot", "error");
+    });
+}
+
+// Bot photos are now set during bot creation, no separate function needed
 
 // Add CSS animations
 const style = document.createElement("style");

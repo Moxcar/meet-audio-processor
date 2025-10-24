@@ -27,6 +27,8 @@ app.use(express.static(path.join(__dirname, "public")));
 // Store active bot sessions
 const activeBots = new Map();
 
+// Note: Using automatic_video_output instead of setBotOutputVideo
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -65,6 +67,14 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     console.log("Client disconnected:", socket.id);
+
+    // Clean up any bot sessions for this socket
+    for (const [botId, session] of activeBots.entries()) {
+      if (session.socketId === socket.id) {
+        console.log(`Cleaning up bot session for bot: ${botId}`);
+        activeBots.delete(botId);
+      }
+    }
   });
 
   socket.on("create-bot", async (data) => {
@@ -90,9 +100,7 @@ io.on("connection", (socket) => {
         recording_config: {
           transcript: {
             provider: {
-              recallai_streaming: {
-                language_code: language,
-              },
+              meeting_captions: {},
             },
           },
           realtime_endpoints: [
@@ -105,9 +113,16 @@ io.on("connection", (socket) => {
         },
       };
 
-      // Add bot photo if provided
+      // Add automatic_video_output if bot photo is provided
       if (botPhoto) {
-        botConfig.bot_photo = botPhoto;
+        botConfig.automatic_video_output = {
+          in_call_recording: {
+            kind: "jpeg",
+            b64_data: botPhoto.replace(/^data:image\/jpeg;base64,/, ""), // Remove data URL prefix
+          },
+        };
+
+        console.log("Image configured with automatic_video_output");
       }
 
       const botResponse = await axios.post(
@@ -135,6 +150,8 @@ io.on("connection", (socket) => {
       });
 
       console.log("Bot created:", botId);
+      console.log("Active bots after creation:", Array.from(activeBots.keys()));
+      console.log("Bot session stored:", activeBots.get(botId));
     } catch (error) {
       console.error(
         "Error creating bot:",
@@ -166,6 +183,8 @@ app.post("/webhook/transcription", (req, res) => {
           botId: botId,
           status: status,
         });
+
+        // Image is now configured with automatic_video_output during bot creation
       }
     }
 
@@ -176,17 +195,44 @@ app.post("/webhook/transcription", (req, res) => {
 
       console.log(`Transcription event: ${event} for bot: ${botId}`);
       console.log("Transcript data:", JSON.stringify(transcriptData, null, 2));
+      console.log("Looking for bot session:", botId);
+      console.log("Available bot sessions:", Array.from(activeBots.entries()));
 
       if (botSession) {
         console.log(`Sending transcription to socket: ${botSession.socketId}`);
-        io.to(botSession.socketId).emit("transcription", {
+
+        // Process meeting captions data format
+        const processedTranscript = {
           type: event,
           transcript: transcriptData,
           timestamp: new Date().toISOString(),
-        });
+          provider: "meeting_captions",
+        };
+
+        // Check if socket is still connected
+        const socketExists = io.sockets.sockets.has(botSession.socketId);
+        if (socketExists) {
+          io.to(botSession.socketId).emit("transcription", processedTranscript);
+          console.log("Transcription sent successfully");
+        } else {
+          console.log(`Socket ${botSession.socketId} is no longer connected`);
+          // Try to find any connected socket and broadcast to all
+          io.emit("transcription", processedTranscript);
+          console.log("Broadcasting to all connected clients");
+        }
       } else {
         console.log(`No active session found for bot: ${botId}`);
         console.log("Active bots:", Array.from(activeBots.keys()));
+
+        // Try to broadcast to all connected clients as fallback
+        const processedTranscript = {
+          type: event,
+          transcript: transcriptData,
+          timestamp: new Date().toISOString(),
+          provider: "meeting_captions",
+        };
+        io.emit("transcription", processedTranscript);
+        console.log("Broadcasting to all clients as fallback");
       }
     }
 
@@ -220,9 +266,7 @@ app.post(
         recording_config: {
           transcript: {
             provider: {
-              recallai_streaming: {
-                language_code: language,
-              },
+              meeting_captions: {},
             },
           },
           realtime_endpoints: [
@@ -235,7 +279,23 @@ app.post(
         },
       };
 
-      // Create bot first
+      // Add automatic_video_output if image is provided
+      if (botPhotoFile) {
+        const imageBuffer = fs.readFileSync(botPhotoFile.path);
+        const base64Image = imageBuffer.toString("base64");
+
+        botConfig.automatic_video_output = {
+          in_call_recording: {
+            kind: "jpeg",
+            b64_data: base64Image,
+          },
+        };
+
+        console.log("Image configured with automatic_video_output");
+        console.log("Image size:", base64Image.length, "characters");
+      }
+
+      // Create bot with image configuration
       const botResponse = await axios.post(
         "https://us-west-2.recall.ai/api/v1/bot",
         botConfig,
@@ -249,34 +309,9 @@ app.post(
 
       const botId = botResponse.data.id;
 
-      // If image was uploaded, set it as bot's output video
+      // Clean up uploaded file
       if (botPhotoFile) {
-        try {
-          // Convert image to base64 for Recall.ai
-          const imageBuffer = fs.readFileSync(botPhotoFile.path);
-          const base64Image = imageBuffer.toString("base64");
-
-          // Set bot's output video (image) using Recall.ai API
-          await axios.post(
-            `https://us-west-2.recall.ai/api/v1/bot/${botId}/output_video`,
-            {
-              data: `data:image/jpeg;base64,${base64Image}`,
-              duration: 0, // Static image
-            },
-            {
-              headers: {
-                Authorization: `Token ${process.env.RECALL_AI_API_KEY}`,
-                "Content-Type": "application/json",
-              },
-            }
-          );
-
-          // Clean up uploaded file
-          fs.unlinkSync(botPhotoFile.path);
-        } catch (imageError) {
-          console.error("Error setting bot image:", imageError);
-          // Continue even if image setting fails
-        }
+        fs.unlinkSync(botPhotoFile.path);
       }
 
       res.json({
@@ -317,9 +352,7 @@ app.post("/api/bot/create", async (req, res) => {
       recording_config: {
         transcript: {
           provider: {
-            recallai_streaming: {
-              language_code: language,
-            },
+            meeting_captions: {},
           },
         },
         realtime_endpoints: [
@@ -332,9 +365,16 @@ app.post("/api/bot/create", async (req, res) => {
       },
     };
 
-    // Add bot photo if provided
+    // Add automatic_video_output if bot photo is provided
     if (botPhoto) {
-      botConfig.bot_photo = botPhoto;
+      botConfig.automatic_video_output = {
+        in_call_recording: {
+          kind: "jpeg",
+          b64_data: botPhoto.replace(/^data:image\/jpeg;base64,/, ""), // Remove data URL prefix
+        },
+      };
+
+      console.log("Image configured with automatic_video_output");
     }
 
     const botResponse = await axios.post(
@@ -380,12 +420,71 @@ app.get("/debug/bots", (req, res) => {
     socketId: session.socketId,
     meetingUrl: session.meetingUrl,
     status: session.status,
+    socketConnected: io.sockets.sockets.has(session.socketId),
   }));
+
+  const connectedSockets = Array.from(io.sockets.sockets.keys());
 
   res.json({
     activeBots: botsInfo,
     totalBots: activeBots.size,
+    connectedSockets: connectedSockets,
+    totalConnectedSockets: connectedSockets.length,
   });
+});
+
+// Endpoint to clean up orphaned bot sessions
+app.post("/debug/cleanup", (req, res) => {
+  const initialSize = activeBots.size;
+  const connectedSockets = Array.from(io.sockets.sockets.keys());
+
+  // Remove sessions for disconnected sockets
+  for (const [botId, session] of activeBots.entries()) {
+    if (!connectedSockets.includes(session.socketId)) {
+      console.log(`Removing orphaned session for bot: ${botId}`);
+      activeBots.delete(botId);
+    }
+  }
+
+  const cleanedSize = activeBots.size;
+
+  res.json({
+    message: "Cleanup completed",
+    initialSessions: initialSize,
+    remainingSessions: cleanedSize,
+    removedSessions: initialSize - cleanedSize,
+  });
+});
+
+// Endpoint to check bot status and output video
+app.get("/api/bot/:botId/status", async (req, res) => {
+  try {
+    const { botId } = req.params;
+
+    const botResponse = await axios.get(
+      `https://us-west-2.recall.ai/api/v1/bot/${botId}`,
+      {
+        headers: {
+          Authorization: `Token ${process.env.RECALL_AI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    res.json({
+      botId: botId,
+      status: botResponse.data.status,
+      outputVideo: botResponse.data.output_video,
+      hasOutputVideo: !!botResponse.data.output_video,
+      botData: botResponse.data,
+    });
+  } catch (error) {
+    console.error("Error getting bot status:", error);
+    res.status(500).json({
+      error: "Failed to get bot status",
+      details: error.response?.data || error.message,
+    });
+  }
 });
 
 server.listen(PORT, () => {
