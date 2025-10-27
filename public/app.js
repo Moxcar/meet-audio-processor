@@ -14,6 +14,7 @@ const connectionStatus = document.getElementById("connectionStatus");
 const transcriptionArea = document.getElementById("transcriptionArea");
 const clearBtn = document.getElementById("clearBtn");
 const scrollBtn = document.getElementById("scrollBtn");
+const finalizeBtn = document.getElementById("finalizeBtn");
 const debugBtn = document.getElementById("debugBtn");
 
 // State
@@ -21,11 +22,178 @@ let isConnected = false;
 let autoScroll = true;
 let currentBotId = null;
 
+// Transcription state management
+let currentIntervention = null; // Current intervention being built
+let interventionTimeout = null; // Timeout for intervention completion
+const INTERVENTION_TIMEOUT_MS = 2000; // 2 seconds timeout between words
+
+// Text deduplication state
+let lastProcessedText = ""; // Track last processed text to avoid duplicates
+let lastProcessedTimestamp = 0; // Track timestamp of last processed text
+
 // Initialize
 document.addEventListener("DOMContentLoaded", () => {
   setupEventListeners();
   updateConnectionStatus("disconnected");
 });
+
+// Intervention management functions
+function startNewIntervention(participant, timestamp) {
+  // Clear any existing timeout
+  if (interventionTimeout) {
+    clearTimeout(interventionTimeout);
+  }
+
+  // Finalize current intervention if exists
+  if (currentIntervention) {
+    finalizeIntervention();
+  }
+
+  // Start new intervention
+  currentIntervention = {
+    participant: participant,
+    words: [],
+    startTime: timestamp,
+    lastWordTime: timestamp,
+    element: null,
+  };
+
+  console.log("🆕 Started new intervention for:", participant.name);
+}
+
+function addWordToIntervention(word, timestamp) {
+  if (!currentIntervention) {
+    console.warn("⚠️ No current intervention to add word to");
+    return;
+  }
+
+  currentIntervention.words.push(word);
+  currentIntervention.lastWordTime = timestamp;
+
+  // Update the intervention display
+  updateInterventionDisplay();
+
+  // Reset timeout
+  if (interventionTimeout) {
+    clearTimeout(interventionTimeout);
+  }
+
+  interventionTimeout = setTimeout(() => {
+    finalizeIntervention();
+  }, INTERVENTION_TIMEOUT_MS);
+
+  console.log("➕ Added word to intervention:", word.text);
+}
+
+function updateInterventionDisplay() {
+  if (!currentIntervention || currentIntervention.words.length === 0) {
+    return;
+  }
+
+  const fullText = currentIntervention.words.map((w) => w.text).join(" ");
+  const speakerName =
+    currentIntervention.participant.name ||
+    `Speaker ${currentIntervention.participant.id || "Unknown"}`;
+
+  if (!currentIntervention.element) {
+    // Create new intervention element
+    currentIntervention.element = document.createElement("div");
+    currentIntervention.element.className = "transcript-item partial";
+    transcriptionArea.appendChild(currentIntervention.element);
+  }
+
+  currentIntervention.element.innerHTML = `
+    <div class="transcript-speaker">${speakerName}</div>
+    <div class="transcript-text">${fullText}</div>
+    <div class="transcript-timestamp">${formatTimestamp(
+      currentIntervention.startTime
+    )}</div>
+  `;
+
+  // Auto-scroll to bottom
+  if (autoScroll) {
+    currentIntervention.element.scrollIntoView({ behavior: "smooth" });
+  }
+}
+
+function updateCurrentInterventionWithText(text, timestamp) {
+  if (!currentIntervention) {
+    console.warn("⚠️ No current intervention to update with text");
+    return;
+  }
+
+  // Update the intervention with the complete text
+  const speakerName =
+    currentIntervention.participant.name ||
+    `Speaker ${currentIntervention.participant.id || "Unknown"}`;
+
+  if (!currentIntervention.element) {
+    // Create new intervention element
+    currentIntervention.element = document.createElement("div");
+    currentIntervention.element.className = "transcript-item partial";
+    transcriptionArea.appendChild(currentIntervention.element);
+  }
+
+  currentIntervention.element.innerHTML = `
+    <div class="transcript-speaker">${speakerName}</div>
+    <div class="transcript-text">${text}</div>
+    <div class="transcript-timestamp">${formatTimestamp(
+      currentIntervention.startTime
+    )}</div>
+  `;
+
+  // Update last word time
+  currentIntervention.lastWordTime = timestamp;
+
+  // Reset timeout for intervention completion
+  if (interventionTimeout) {
+    clearTimeout(interventionTimeout);
+  }
+
+  interventionTimeout = setTimeout(() => {
+    finalizeIntervention();
+  }, INTERVENTION_TIMEOUT_MS);
+
+  // Auto-scroll to bottom
+  if (autoScroll) {
+    currentIntervention.element.scrollIntoView({ behavior: "smooth" });
+  }
+
+  console.log("🔄 Updated intervention with text:", text);
+}
+
+function finalizeIntervention() {
+  if (!currentIntervention || !currentIntervention.element) {
+    return;
+  }
+
+  // Mark as final
+  currentIntervention.element.className = "transcript-item final";
+
+  console.log(
+    "✅ Finalized intervention:",
+    currentIntervention.words.map((w) => w.text).join(" ")
+  );
+
+  // Clear current intervention
+  currentIntervention = null;
+
+  // Clear timeout
+  if (interventionTimeout) {
+    clearTimeout(interventionTimeout);
+    interventionTimeout = null;
+  }
+
+  // Clear deduplication state when intervention is finalized
+  lastProcessedText = "";
+  lastProcessedTimestamp = 0;
+}
+
+function clearCurrentIntervention() {
+  if (currentIntervention) {
+    finalizeIntervention();
+  }
+}
 
 function setupEventListeners() {
   // Connect button
@@ -43,6 +211,16 @@ function setupEventListeners() {
 
   // Auto-scroll toggle
   scrollBtn.addEventListener("click", toggleAutoScroll);
+
+  // Finalize intervention button
+  finalizeBtn.addEventListener("click", () => {
+    if (currentIntervention) {
+      finalizeIntervention();
+      showMessage("Intervención finalizada manualmente", "info");
+    } else {
+      showMessage("No hay intervención activa para finalizar", "warning");
+    }
+  });
 
   // Debug button
   debugBtn.addEventListener("click", showDebugInfo);
@@ -72,6 +250,11 @@ function setupEventListeners() {
   socket.on("disconnect", () => {
     console.log("Disconnected from server");
     updateConnectionStatus("disconnected");
+    // Finalize any current intervention when disconnecting
+    clearCurrentIntervention();
+    // Clear deduplication state
+    lastProcessedText = "";
+    lastProcessedTimestamp = 0;
   });
 
   socket.on("bot-created", (data) => {
@@ -113,13 +296,25 @@ function setupEventListeners() {
 
     if (data.status === "in_call") {
       updateConnectionStatus("connected");
+      const transcriptionType =
+        document.querySelector('input[name="transcriptionType"]:checked')
+          ?.value || "meeting_captions";
+      const transcriptionTypeName =
+        transcriptionType === "meeting_captions"
+          ? "Meeting Captions"
+          : "AI Transcription (Deepgram) con diarización";
       showMessage(
-        "Bot conectado a la reunión. Comenzando transcripción con Meeting Captions...",
+        `Bot conectado a la reunión. Comenzando transcripción con ${transcriptionTypeName}...`,
         "success"
       );
     } else if (data.status === "call_ended") {
       updateConnectionStatus("disconnected");
       showMessage("Llamada finalizada", "info");
+      // Finalize any current intervention when call ends
+      clearCurrentIntervention();
+      // Clear deduplication state
+      lastProcessedText = "";
+      lastProcessedTimestamp = 0;
     } else {
       console.log("Unknown bot status:", data.status);
       showMessage(`Estado del bot: ${data.status}`, "info");
@@ -137,6 +332,9 @@ function handleConnect() {
   const selectedLanguage = languageSelect.value;
   const botName = botNameInput.value.trim() || "Transcription Bot";
   const botPhotoFile = botPhotoInput.files[0];
+  const transcriptionType = document.querySelector(
+    'input[name="transcriptionType"]:checked'
+  ).value;
 
   if (!meetingUrl) {
     showMessage("Por favor ingresa una URL de Google Meet", "error");
@@ -156,6 +354,7 @@ function handleConnect() {
   formData.append("meetingUrl", meetingUrl);
   formData.append("language", selectedLanguage);
   formData.append("botName", botName);
+  formData.append("transcriptionType", transcriptionType);
 
   if (botPhotoFile) {
     formData.append("botPhoto", botPhotoFile);
@@ -175,8 +374,12 @@ function handleConnect() {
       } else {
         currentBotId = data.botId;
         updateConnectionStatus("connecting");
+        const transcriptionTypeName =
+          transcriptionType === "meeting_captions"
+            ? "Meeting Captions"
+            : "AI Transcription (Deepgram) con diarización";
         showMessage(
-          "Bot creado exitosamente. Esperando conexión a la reunión...",
+          `Bot creado exitosamente usando ${transcriptionTypeName}. Esperando conexión a la reunión...`,
           "success"
         );
 
@@ -311,14 +514,7 @@ function displayTranscription(data) {
     placeholder.remove();
   }
 
-  const transcriptItem = document.createElement("div");
-  transcriptItem.className = `transcript-item ${
-    data.type === "transcript.partial_data" ? "partial" : "final"
-  }`;
-
-  // Handle meeting captions format
-  let speaker, text, timestamp;
-
+  // Handle different transcription providers
   if (data.provider === "meeting_captions") {
     // Meeting captions format: data.transcript is an array of participants
     if (Array.isArray(data.transcript)) {
@@ -349,11 +545,97 @@ function displayTranscription(data) {
       });
     } else {
       // Fallback for other formats
-      speaker =
+      const speaker =
         data.transcript.participant?.name ||
         `Speaker ${data.transcript.participant?.id || "Unknown"}`;
-      text = data.transcript.words?.map((w) => w.text).join(" ") || "";
-      timestamp = formatTimestamp(data.timestamp);
+      const text = data.transcript.words?.map((w) => w.text).join(" ") || "";
+      const timestamp = formatTimestamp(data.timestamp);
+
+      const transcriptItem = document.createElement("div");
+      transcriptItem.className = `transcript-item ${
+        data.type === "transcript.partial_data" ? "partial" : "final"
+      }`;
+
+      transcriptItem.innerHTML = `
+        <div class="transcript-speaker">${speaker}</div>
+        <div class="transcript-text">${text}</div>
+        <div class="transcript-timestamp">${timestamp}</div>
+      `;
+      transcriptionArea.appendChild(transcriptItem);
+    }
+  } else if (data.provider === "deepgram_streaming") {
+    // Deepgram format: Handle partial and final data correctly
+    const deepgramData = data.data || data.transcript;
+
+    if (
+      deepgramData &&
+      deepgramData.words &&
+      Array.isArray(deepgramData.words)
+    ) {
+      // Extract full text from current words
+      const currentText = deepgramData.words.map((w) => w.text).join(" ");
+      const participant = deepgramData.participant;
+      const timestamp =
+        deepgramData.words[0]?.start_timestamp?.relative || Date.now();
+
+      // Check for duplicate text to avoid concatenation issues
+      if (
+        currentText === lastProcessedText &&
+        data.type === "transcript.partial_data" &&
+        Math.abs(timestamp - lastProcessedTimestamp) < 1000 // Within 1 second
+      ) {
+        console.log("🔄 Skipping duplicate partial text:", currentText);
+        return;
+      }
+
+      // Update last processed text for partial data
+      if (data.type === "transcript.partial_data") {
+        lastProcessedText = currentText;
+        lastProcessedTimestamp = timestamp;
+      }
+
+      // Check if this is a new participant or if we should start a new intervention
+      if (
+        !currentIntervention ||
+        currentIntervention.participant.id !== participant.id
+      ) {
+        // Start new intervention only for new participant
+        startNewIntervention(participant, timestamp);
+      }
+
+      // For partial data, update the current intervention with the full text
+      if (data.type === "transcript.partial_data") {
+        console.log("📝 Processing partial data:", currentText);
+        updateCurrentInterventionWithText(currentText, timestamp);
+      } else {
+        console.log("✅ Processing final data:", currentText);
+        // For final data, update the current intervention and finalize it
+        if (
+          currentIntervention &&
+          currentIntervention.participant.id === participant.id
+        ) {
+          updateCurrentInterventionWithText(currentText, timestamp);
+          // Finalize immediately for transcript.data
+          setTimeout(() => finalizeIntervention(), 100);
+        } else {
+          // If no current intervention, create one and finalize
+          startNewIntervention(participant, timestamp);
+          updateCurrentInterventionWithText(currentText, timestamp);
+          setTimeout(() => finalizeIntervention(), 100);
+        }
+      }
+    } else {
+      // Fallback for other Deepgram formats
+      const speaker =
+        deepgramData?.participant?.name ||
+        `Speaker ${deepgramData?.participant?.id || "Unknown"}`;
+      const text = deepgramData?.text || "";
+      const timestamp = formatTimestamp(data.timestamp);
+
+      const transcriptItem = document.createElement("div");
+      transcriptItem.className = `transcript-item ${
+        data.type === "transcript.partial_data" ? "partial" : "final"
+      }`;
 
       transcriptItem.innerHTML = `
         <div class="transcript-speaker">${speaker}</div>
@@ -363,12 +645,17 @@ function displayTranscription(data) {
       transcriptionArea.appendChild(transcriptItem);
     }
   } else {
-    // Original format for other providers
-    speaker =
+    // Fallback format for other providers
+    const speaker =
       data.transcript.participant?.name ||
       `Speaker ${data.transcript.participant?.id || "Unknown"}`;
-    text = data.transcript.words?.map((w) => w.text).join(" ") || "";
-    timestamp = formatTimestamp(data.timestamp);
+    const text = data.transcript.words?.map((w) => w.text).join(" ") || "";
+    const timestamp = formatTimestamp(data.timestamp);
+
+    const transcriptItem = document.createElement("div");
+    transcriptItem.className = `transcript-item ${
+      data.type === "transcript.partial_data" ? "partial" : "final"
+    }`;
 
     transcriptItem.innerHTML = `
       <div class="transcript-speaker">${speaker}</div>
@@ -388,10 +675,17 @@ function displayTranscription(data) {
 }
 
 function clearTranscription() {
+  // Clear current intervention
+  clearCurrentIntervention();
+
+  // Clear deduplication state
+  lastProcessedText = "";
+  lastProcessedTimestamp = 0;
+
   transcriptionArea.innerHTML = `
         <div class="transcription-placeholder">
-            <p>Ingresa una URL de Google Meet y haz clic en "Conectar Bot" para comenzar la transcripción con Meeting Captions</p>
-            <p><small>Nota: Asegúrate de que las captions estén habilitadas en la reunión</small></p>
+            <p>Ingresa una URL de Google Meet y haz clic en "Conectar Bot" para comenzar la transcripción</p>
+            <p><small>Selecciona el tipo de transcripción: Meeting Captions o AI Transcription (Deepgram)</small></p>
         </div>
     `;
 }

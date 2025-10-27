@@ -26,6 +26,35 @@
           </div>
 
           <div class="input-group">
+            <label>Tipo de transcripción:</label>
+            <div class="radio-group">
+              <label class="radio-option">
+                <input
+                  type="radio"
+                  name="transcriptionType"
+                  value="meeting_captions"
+                  checked
+                />
+                <span class="radio-label">Meeting Caption Transcription</span>
+                <span class="radio-description"
+                  >Usa las captions nativas de la reunión</span
+                >
+              </label>
+              <label class="radio-option">
+                <input
+                  type="radio"
+                  name="transcriptionType"
+                  value="ai_transcription"
+                />
+                <span class="radio-label">AI Transcription (Deepgram)</span>
+                <span class="radio-description"
+                  >Transcripción avanzada con IA + Diarización perfecta</span
+                >
+              </label>
+            </div>
+          </div>
+
+          <div class="input-group">
             <label for="languageSelect">Idioma de transcripción:</label>
             <select id="languageSelect" class="language-select">
               <option value="auto">Auto-detectar</option>
@@ -91,6 +120,9 @@
               <button id="scrollBtn" class="btn-secondary">
                 Auto-scroll: ON
               </button>
+              <button id="finalizeBtn" class="btn-secondary">
+                Finalizar Intervención
+              </button>
               <button id="debugBtn" class="btn-secondary">Debug Info</button>
             </div>
           </div>
@@ -100,6 +132,12 @@
               <p>
                 Ingresa una URL de Google Meet y haz clic en "Conectar Bot" para
                 comenzar la transcripción
+              </p>
+              <p>
+                <small
+                  >Selecciona el tipo de transcripción: Meeting Captions o AI
+                  Transcription (Deepgram)</small
+                >
               </p>
             </div>
           </div>

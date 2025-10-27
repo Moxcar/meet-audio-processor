@@ -84,6 +84,7 @@ io.on("connection", (socket) => {
         language = "auto",
         botName = "Transcription Bot",
         botPhoto,
+        transcriptionType = "meeting_captions",
       } = data;
       console.log(
         "Creating bot for meeting:",
@@ -91,18 +92,38 @@ io.on("connection", (socket) => {
         "with language:",
         language,
         "name:",
-        botName
+        botName,
+        "transcription type:",
+        transcriptionType
       );
+
+      // Configure transcription provider based on selection
+      let transcriptConfig;
+      if (transcriptionType === "ai_transcription") {
+        transcriptConfig = {
+          provider: {
+            deepgram_streaming: {
+              language: language === "auto" ? "en-US" : language,
+              model: "nova-2", // Use nova-2 for better multilingual support
+            },
+          },
+          diarization: {
+            use_separate_streams_when_available: true,
+          },
+        };
+      } else {
+        transcriptConfig = {
+          provider: {
+            meeting_captions: {},
+          },
+        };
+      }
 
       const botConfig = {
         meeting_url: meetingUrl,
         bot_name: botName,
         recording_config: {
-          transcript: {
-            provider: {
-              meeting_captions: {},
-            },
-          },
+          transcript: transcriptConfig,
           realtime_endpoints: [
             {
               type: "webhook",
@@ -125,6 +146,18 @@ io.on("connection", (socket) => {
         console.log("Image configured with automatic_video_output");
       }
 
+      console.log("🚀 CREATING BOT - Full Request Details:");
+      console.log("📋 Bot Config:", JSON.stringify(botConfig, null, 2));
+      console.log(
+        "🔑 API Key:",
+        process.env.RECALL_AI_API_KEY ? "Present" : "Missing"
+      );
+      console.log(
+        "🌐 Webhook URL:",
+        `${process.env.WEBHOOK_BASE_URL}/webhook/transcription`
+      );
+      console.log("📡 Request URL:", "https://us-west-2.recall.ai/api/v1/bot");
+
       const botResponse = await axios.post(
         "https://us-west-2.recall.ai/api/v1/bot",
         botConfig,
@@ -134,6 +167,13 @@ io.on("connection", (socket) => {
             "Content-Type": "application/json",
           },
         }
+      );
+
+      console.log("✅ BOT CREATED SUCCESSFULLY:");
+      console.log("📊 Response Status:", botResponse.status);
+      console.log(
+        "📄 Response Data:",
+        JSON.stringify(botResponse.data, null, 2)
       );
 
       const botId = botResponse.data.id;
@@ -153,10 +193,15 @@ io.on("connection", (socket) => {
       console.log("Active bots after creation:", Array.from(activeBots.keys()));
       console.log("Bot session stored:", activeBots.get(botId));
     } catch (error) {
+      console.error("❌ ERROR CREATING BOT:");
+      console.error("🚨 Error Message:", error.message);
+      console.error("📊 Error Response Status:", error.response?.status);
       console.error(
-        "Error creating bot:",
-        error.response?.data || error.message
+        "📄 Error Response Data:",
+        JSON.stringify(error.response?.data, null, 2)
       );
+      console.error("🔍 Full Error Object:", error);
+
       socket.emit("bot-error", {
         message: "Failed to create bot",
         error: error.response?.data || error.message,
@@ -198,15 +243,46 @@ app.post("/webhook/transcription", (req, res) => {
       console.log("Looking for bot session:", botId);
       console.log("Available bot sessions:", Array.from(activeBots.entries()));
 
+      // Debug: Check data structure to determine provider
+      console.log("Data structure analysis:");
+      console.log("- Has participant:", !!transcriptData?.participant);
+      console.log("- Has words:", !!transcriptData?.words);
+      console.log("- Is array:", Array.isArray(transcriptData));
+      console.log(
+        "- Keys:",
+        transcriptData ? Object.keys(transcriptData) : "null"
+      );
+
       if (botSession) {
         console.log(`Sending transcription to socket: ${botSession.socketId}`);
 
-        // Process meeting captions data format
+        // Determine provider based on data structure
+        let provider = "meeting_captions"; // Default
+
+        // Deepgram data has participant and words at the same level
+        if (
+          transcriptData &&
+          transcriptData.participant &&
+          transcriptData.words
+        ) {
+          provider = "deepgram_streaming";
+          console.log("Detected Deepgram format");
+        }
+        // Meeting captions data is usually an array of participants
+        else if (Array.isArray(transcriptData)) {
+          provider = "meeting_captions";
+          console.log("Detected Meeting Captions format (array)");
+        } else {
+          console.log("Using default provider:", provider);
+        }
+
+        // Process transcript data format
         const processedTranscript = {
           type: event,
-          transcript: transcriptData,
+          data: transcriptData, // Include raw data for Deepgram
+          transcript: transcriptData, // Keep for backward compatibility
           timestamp: new Date().toISOString(),
-          provider: "meeting_captions",
+          provider: provider,
         };
 
         // Check if socket is still connected
@@ -225,11 +301,29 @@ app.post("/webhook/transcription", (req, res) => {
         console.log("Active bots:", Array.from(activeBots.keys()));
 
         // Try to broadcast to all connected clients as fallback
+        let provider = "meeting_captions"; // Default
+
+        // Deepgram data has participant and words at the same level
+        if (
+          transcriptData &&
+          transcriptData.participant &&
+          transcriptData.words
+        ) {
+          provider = "deepgram_streaming";
+          console.log("Fallback: Detected Deepgram format");
+        }
+        // Meeting captions data is usually an array of participants
+        else if (Array.isArray(transcriptData)) {
+          provider = "meeting_captions";
+          console.log("Fallback: Detected Meeting Captions format (array)");
+        }
+
         const processedTranscript = {
           type: event,
+          data: transcriptData,
           transcript: transcriptData,
           timestamp: new Date().toISOString(),
-          provider: "meeting_captions",
+          provider: provider,
         };
         io.emit("transcription", processedTranscript);
         console.log("Broadcasting to all clients as fallback");
@@ -253,6 +347,7 @@ app.post(
         meetingUrl,
         language = "auto",
         botName = "Transcription Bot",
+        transcriptionType = "meeting_captions",
       } = req.body;
       const botPhotoFile = req.file;
 
@@ -260,15 +355,33 @@ app.post(
         return res.status(400).json({ error: "Meeting URL is required" });
       }
 
+      // Configure transcription provider based on selection
+      let transcriptConfig;
+      if (transcriptionType === "ai_transcription") {
+        transcriptConfig = {
+          provider: {
+            deepgram_streaming: {
+              language: language === "auto" ? "en-US" : language,
+              model: "nova-2", // Use nova-2 for better multilingual support
+            },
+          },
+          diarization: {
+            use_separate_streams_when_available: true,
+          },
+        };
+      } else {
+        transcriptConfig = {
+          provider: {
+            meeting_captions: {},
+          },
+        };
+      }
+
       const botConfig = {
         meeting_url: meetingUrl,
         bot_name: botName,
         recording_config: {
-          transcript: {
-            provider: {
-              meeting_captions: {},
-            },
-          },
+          transcript: transcriptConfig,
           realtime_endpoints: [
             {
               type: "webhook",
@@ -295,6 +408,18 @@ app.post(
         console.log("Image size:", base64Image.length, "characters");
       }
 
+      console.log("🚀 CREATING BOT WITH IMAGE - Full Request Details:");
+      console.log("📋 Bot Config:", JSON.stringify(botConfig, null, 2));
+      console.log(
+        "🔑 API Key:",
+        process.env.RECALL_AI_API_KEY ? "Present" : "Missing"
+      );
+      console.log(
+        "🌐 Webhook URL:",
+        `${process.env.WEBHOOK_BASE_URL}/webhook/transcription`
+      );
+      console.log("📡 Request URL:", "https://us-west-2.recall.ai/api/v1/bot");
+
       // Create bot with image configuration
       const botResponse = await axios.post(
         "https://us-west-2.recall.ai/api/v1/bot",
@@ -305,6 +430,13 @@ app.post(
             "Content-Type": "application/json",
           },
         }
+      );
+
+      console.log("✅ BOT WITH IMAGE CREATED SUCCESSFULLY:");
+      console.log("📊 Response Status:", botResponse.status);
+      console.log(
+        "📄 Response Data:",
+        JSON.stringify(botResponse.data, null, 2)
       );
 
       const botId = botResponse.data.id;
@@ -320,10 +452,15 @@ app.post(
         message: "Bot created successfully",
       });
     } catch (error) {
+      console.error("❌ ERROR CREATING BOT WITH IMAGE:");
+      console.error("🚨 Error Message:", error.message);
+      console.error("📊 Error Response Status:", error.response?.status);
       console.error(
-        "Error creating bot:",
-        error.response?.data || error.message
+        "📄 Error Response Data:",
+        JSON.stringify(error.response?.data, null, 2)
       );
+      console.error("🔍 Full Error Object:", error);
+
       res.status(500).json({
         error: "Failed to create bot",
         details: error.response?.data || error.message,
@@ -340,21 +477,39 @@ app.post("/api/bot/create", async (req, res) => {
       language = "auto",
       botName = "Transcription Bot",
       botPhoto,
+      transcriptionType = "meeting_captions",
     } = req.body;
 
     if (!meetingUrl) {
       return res.status(400).json({ error: "Meeting URL is required" });
     }
 
+    // Configure transcription provider based on selection
+    let transcriptConfig;
+    if (transcriptionType === "ai_transcription") {
+      transcriptConfig = {
+        provider: {
+          deepgram_streaming: {
+            language: language === "auto" ? "en-US" : language,
+          },
+        },
+        diarization: {
+          use_separate_streams_when_available: true,
+        },
+      };
+    } else {
+      transcriptConfig = {
+        provider: {
+          meeting_captions: {},
+        },
+      };
+    }
+
     const botConfig = {
       meeting_url: meetingUrl,
       bot_name: botName,
       recording_config: {
-        transcript: {
-          provider: {
-            meeting_captions: {},
-          },
-        },
+        transcript: transcriptConfig,
         realtime_endpoints: [
           {
             type: "webhook",
@@ -377,6 +532,18 @@ app.post("/api/bot/create", async (req, res) => {
       console.log("Image configured with automatic_video_output");
     }
 
+    console.log("🚀 CREATING BOT (API) - Full Request Details:");
+    console.log("📋 Bot Config:", JSON.stringify(botConfig, null, 2));
+    console.log(
+      "🔑 API Key:",
+      process.env.RECALL_AI_API_KEY ? "Present" : "Missing"
+    );
+    console.log(
+      "🌐 Webhook URL:",
+      `${process.env.WEBHOOK_BASE_URL}/webhook/transcription`
+    );
+    console.log("📡 Request URL:", "https://us-west-2.recall.ai/api/v1/bot");
+
     const botResponse = await axios.post(
       "https://us-west-2.recall.ai/api/v1/bot",
       botConfig,
@@ -388,6 +555,10 @@ app.post("/api/bot/create", async (req, res) => {
       }
     );
 
+    console.log("✅ BOT (API) CREATED SUCCESSFULLY:");
+    console.log("📊 Response Status:", botResponse.status);
+    console.log("📄 Response Data:", JSON.stringify(botResponse.data, null, 2));
+
     const botId = botResponse.data.id;
     res.json({
       botId: botId,
@@ -395,7 +566,15 @@ app.post("/api/bot/create", async (req, res) => {
       message: "Bot created successfully",
     });
   } catch (error) {
-    console.error("Error creating bot:", error.response?.data || error.message);
+    console.error("❌ ERROR CREATING BOT (API):");
+    console.error("🚨 Error Message:", error.message);
+    console.error("📊 Error Response Status:", error.response?.status);
+    console.error(
+      "📄 Error Response Data:",
+      JSON.stringify(error.response?.data, null, 2)
+    );
+    console.error("🔍 Full Error Object:", error);
+
     res.status(500).json({
       error: "Failed to create bot",
       details: error.response?.data || error.message,
@@ -488,9 +667,20 @@ app.get("/api/bot/:botId/status", async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`WebSocket server ready`);
+  console.log("🚀 SERVER STARTED SUCCESSFULLY!");
+  console.log(`📡 Server running on port ${PORT}`);
+  console.log(`🔌 WebSocket server ready`);
   console.log(
-    `Webhook URL: ${process.env.WEBHOOK_BASE_URL}/webhook/transcription`
+    `🌐 Webhook URL: ${process.env.WEBHOOK_BASE_URL}/webhook/transcription`
   );
+  console.log("📋 CONFIGURATION CHECK:");
+  console.log(
+    `🔑 Recall.ai API Key: ${
+      process.env.RECALL_AI_API_KEY ? "✅ Present" : "❌ Missing"
+    }`
+  );
+  console.log(
+    `🌍 Webhook Base URL: ${process.env.WEBHOOK_BASE_URL || "❌ Missing"}`
+  );
+  console.log("🎯 Ready to create bots with Deepgram AI Transcription!");
 });

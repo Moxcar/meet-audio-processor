@@ -95,6 +95,61 @@ main {
   padding: 8px;
 }
 
+/* Radio button styling */
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.radio-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 2px solid #e1e5e9;
+  border-radius: 8px;
+  background: #f8f9fa;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.radio-option:hover {
+  border-color: #667eea;
+  background: #f0f2ff;
+}
+
+.radio-option input[type="radio"] {
+  margin: 0;
+  width: 18px;
+  height: 18px;
+  accent-color: #667eea;
+  cursor: pointer;
+}
+
+.radio-label {
+  font-weight: 600;
+  color: #333;
+  font-size: 16px;
+}
+
+.radio-description {
+  display: block;
+  font-size: 14px;
+  color: #6c757d;
+  margin-top: 4px;
+}
+
+.radio-option:has(input:checked) {
+  border-color: #667eea;
+  background: #f0f2ff;
+}
+
+.radio-option:has(input:checked) .radio-label {
+  color: #667eea;
+}
+
 /* File upload styling */
 .file-upload-container {
   position: relative;
@@ -329,10 +384,20 @@ main {
 .transcript-item.partial {
   opacity: 0.7;
   border-left-color: #ffc107;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 193, 7, 0.1) 0%,
+    transparent 100%
+  );
 }
 
 .transcript-item.final {
   border-left-color: #28a745;
+  background: linear-gradient(
+    90deg,
+    rgba(40, 167, 69, 0.1) 0%,
+    transparent 100%
+  );
 }
 
 .transcript-speaker {
