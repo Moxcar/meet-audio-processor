@@ -25,7 +25,7 @@ let currentBotId = null;
 // Transcription state management
 let currentIntervention = null; // Current intervention being built
 let interventionTimeout = null; // Timeout for intervention completion
-const INTERVENTION_TIMEOUT_MS = 2000; // 2 seconds timeout between words
+const INTERVENTION_TIMEOUT_MS = 5000; // 5 seconds timeout between words to group consecutive messages
 
 // Text deduplication state
 let lastProcessedText = ""; // Track last processed text to avoid duplicates
@@ -134,9 +134,31 @@ function updateCurrentInterventionWithText(text, timestamp) {
     transcriptionArea.appendChild(currentIntervention.element);
   }
 
+  // Handle text concatenation for the same user
+  let finalText = text;
+  if (
+    currentIntervention.currentText &&
+    currentIntervention.currentText !== text
+  ) {
+    // If we have previous text and it's different, check if we should append or replace
+    if (text.includes(currentIntervention.currentText)) {
+      // New text contains the old text, use the new text (it's more complete)
+      finalText = text;
+    } else if (currentIntervention.currentText.includes(text)) {
+      // Old text contains the new text, keep the old text (it's more complete)
+      finalText = currentIntervention.currentText;
+    } else {
+      // Different text, append it
+      finalText = currentIntervention.currentText + " " + text;
+    }
+  }
+
+  // Store the current text in the intervention object
+  currentIntervention.currentText = finalText;
+
   currentIntervention.element.innerHTML = `
     <div class="transcript-speaker">${speakerName}</div>
-    <div class="transcript-text">${text}</div>
+    <div class="transcript-text">${finalText}</div>
     <div class="transcript-timestamp">${formatTimestamp(
       currentIntervention.startTime
     )}</div>
@@ -159,7 +181,7 @@ function updateCurrentInterventionWithText(text, timestamp) {
     currentIntervention.element.scrollIntoView({ behavior: "smooth" });
   }
 
-  console.log("🔄 Updated intervention with text:", text);
+  console.log("🔄 Updated intervention with text:", finalText);
 }
 
 function finalizeIntervention() {
@@ -524,23 +546,27 @@ function displayTranscription(data) {
           const participantName =
             participant.participant?.name ||
             `Speaker ${participant.participant?.id || "Unknown"}`;
+          const participantId = participant.participant?.id || "Unknown";
+          const fullText = participant.words.map((w) => w.text).join(" ");
+          const timestamp =
+            participant.words[0]?.start_timestamp?.absolute || data.timestamp;
 
-          participant.words.forEach((word) => {
-            const wordItem = document.createElement("div");
-            wordItem.className = `transcript-item ${
-              data.type === "transcript.partial_data" ? "partial" : "final"
-            }`;
+          // Check if this is a new participant or if we should continue current intervention
+          if (
+            !currentIntervention ||
+            currentIntervention.participant.id !== participantId
+          ) {
+            // Start new intervention for new participant
+            startNewIntervention(participant.participant, timestamp);
+          }
 
-            wordItem.innerHTML = `
-              <div class="transcript-speaker">${participantName}</div>
-              <div class="transcript-text">${word.text}</div>
-              <div class="transcript-timestamp">${formatTimestamp(
-                word.start_timestamp?.absolute || data.timestamp
-              )}</div>
-            `;
+          // Update the current intervention with the full text
+          updateCurrentInterventionWithText(fullText, timestamp);
 
-            transcriptionArea.appendChild(wordItem);
-          });
+          // If this is final data, finalize the intervention
+          if (data.type === "transcript.data") {
+            setTimeout(() => finalizeIntervention(), 100);
+          }
         }
       });
     } else {
