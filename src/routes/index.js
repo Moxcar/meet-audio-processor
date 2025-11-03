@@ -1,6 +1,7 @@
 const express = require("express");
 const fs = require("fs");
 const axios = require("axios");
+const FormData = require("form-data");
 const BotService = require("../services/BotService");
 const { upload } = require("../middleware/upload");
 const { config } = require("../config");
@@ -394,28 +395,39 @@ class RoutesHandler {
         });
       }
 
-      // Prepare payload for n8n
-      const payload = {
-        timestamp,
-        meeting_url,
-        total_interventions,
-        transcript_data,
-        source: "meet-audio-processor",
-        processed_at: new Date().toISOString(),
-      };
+      // Build multipart/form-data with a file instead of raw JSON body
+      const form = new FormData();
 
-      console.log("📤 Sending transcript to n8n webhook:", n8nWebhookUrl);
-      console.log(
-        "📊 Payload size:",
-        JSON.stringify(payload).length,
-        "characters"
+      // Prepare file buffer (JSON file)
+      const fileBuffer = Buffer.from(
+        JSON.stringify({ transcript_data }, null, 2),
+        "utf-8"
       );
 
-      // Send to n8n webhook
-      const response = await axios.post(n8nWebhookUrl, payload, {
+      form.append("file", fileBuffer, {
+        filename: "transcript.json",
+        contentType: "application/json",
+      });
+
+      // Add metadata as form fields
+      if (timestamp) form.append("timestamp", String(timestamp));
+      if (meeting_url) form.append("meeting_url", String(meeting_url));
+      if (typeof total_interventions !== "undefined")
+        form.append("total_interventions", String(total_interventions));
+      form.append("source", "meet-audio-processor");
+      form.append("processed_at", new Date().toISOString());
+
+      console.log("📤 Sending transcript file to n8n webhook:", n8nWebhookUrl);
+      console.log("📄 File name:", "transcript.json");
+      console.log("📊 File size:", fileBuffer.length, "bytes");
+
+      // Send to n8n webhook as multipart/form-data
+      const response = await axios.post(n8nWebhookUrl, form, {
         headers: {
-          "Content-Type": "application/json",
+          ...form.getHeaders(),
         },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
         timeout: 30000, // 30 seconds timeout
       });
 
