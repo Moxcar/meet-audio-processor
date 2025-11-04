@@ -3,7 +3,7 @@ const fs = require("fs");
 const axios = require("axios");
 const FormData = require("form-data");
 const BotService = require("../services/BotService");
-const { upload } = require("../middleware/upload");
+const { upload, audioUpload } = require("../middleware/upload");
 const { config } = require("../config");
 
 class RoutesHandler {
@@ -174,6 +174,23 @@ class RoutesHandler {
     this.router.get("/api/bot/:botId/transcript", async (req, res) => {
       await this.handleGetBotTranscript(req, res);
     });
+
+    // Endpoint to send audio output to bot (file upload)
+    this.router.post(
+      "/api/bot/:botId/output-audio",
+      audioUpload.single("audioFile"),
+      async (req, res) => {
+        await this.handleSendBotAudio(req, res);
+      }
+    );
+
+    // Endpoint to send audio output to bot (base64 data)
+    this.router.post(
+      "/api/bot/:botId/output-audio-base64",
+      async (req, res) => {
+        await this.handleSendBotAudioBase64(req, res);
+      }
+    );
   }
 
   // Handle bot creation with image upload
@@ -377,6 +394,82 @@ class RoutesHandler {
     }
   }
 
+  // Handle sending audio output to bot (file upload)
+  async handleSendBotAudio(req, res) {
+    try {
+      const { botId } = req.params;
+      const audioFile = req.file;
+
+      if (!audioFile) {
+        return res.status(400).json({ error: "Audio file is required" });
+      }
+
+      // Read audio file and convert to base64
+      const audioBuffer = fs.readFileSync(audioFile.path);
+      const audioBase64 = audioBuffer.toString("base64");
+
+      // Send audio to Recall.ai
+      const result = await this.botService.sendBotAudioOutput(
+        botId,
+        audioBase64
+      );
+
+      // Clean up uploaded file
+      fs.unlinkSync(audioFile.path);
+
+      res.json({
+        botId: botId,
+        status: "success",
+        message: "Audio sent to bot successfully",
+        result: result,
+      });
+    } catch (error) {
+      console.error("Error sending audio to bot:", error);
+
+      // Clean up uploaded file if it exists
+      if (req.file && req.file.path) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (unlinkError) {
+          console.error("Error deleting uploaded file:", unlinkError);
+        }
+      }
+
+      res.status(500).json({
+        error: "Failed to send audio to bot",
+        details: error.response?.data || error.message,
+      });
+    }
+  }
+
+  // Handle sending audio output to bot (base64 data)
+  async handleSendBotAudioBase64(req, res) {
+    try {
+      const { botId } = req.params;
+      const { b64_data } = req.body;
+
+      if (!b64_data) {
+        return res.status(400).json({ error: "b64_data is required" });
+      }
+
+      // Send audio to Recall.ai
+      const result = await this.botService.sendBotAudioOutput(botId, b64_data);
+
+      res.json({
+        botId: botId,
+        status: "success",
+        message: "Audio sent to bot successfully",
+        result: result,
+      });
+    } catch (error) {
+      console.error("Error sending audio to bot:", error);
+      res.status(500).json({
+        error: "Failed to send audio to bot",
+        details: error.response?.data || error.message,
+      });
+    }
+  }
+
   // Handle sending transcript to n8n webhook
   async handleSendToN8n(req, res) {
     try {
@@ -445,14 +538,31 @@ class RoutesHandler {
     } catch (error) {
       console.error("❌ Error sending to n8n:", error.message);
 
+      let errorDetails = error.message;
+      
       if (error.response) {
         console.error("📊 n8n Response Status:", error.response.status);
         console.error("📄 n8n Response Data:", error.response.data);
+        
+        // Handle different response types from n8n
+        if (typeof error.response.data === 'string') {
+          // If response is a string (HTML error page), provide a more helpful message
+          if (error.response.data.includes('<!DOCTYPE')) {
+            errorDetails = `n8n webhook returned HTML error page (status ${error.response.status}). Please check the webhook URL configuration.`;
+          } else {
+            errorDetails = error.response.data.substring(0, 200);
+          }
+        } else if (error.response.data && typeof error.response.data === 'object') {
+          // If it's an object, try to extract meaningful error message
+          errorDetails = error.response.data.message || error.response.data.error || JSON.stringify(error.response.data);
+        } else {
+          errorDetails = `HTTP ${error.response.status}: ${error.response.statusText || 'Unknown error'}`;
+        }
       }
 
       res.status(500).json({
         error: "Failed to send transcript to n8n",
-        details: error.response?.data || error.message,
+        details: errorDetails,
       });
     }
   }

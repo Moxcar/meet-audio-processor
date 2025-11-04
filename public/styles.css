@@ -364,6 +364,51 @@ main {
   background: #fafbfc;
 }
 
+/* Audio output panel */
+.audio-output-panel {
+  background: #f8f9fa;
+  border-top: 1px solid #e1e5e9;
+  padding: 20px 30px;
+}
+
+.audio-output-header {
+  margin-bottom: 15px;
+}
+
+.audio-output-header h3 {
+  color: #333;
+  font-size: 1.2rem;
+  margin: 0;
+}
+
+.audio-output-controls {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.audio-output-controls .file-upload-container {
+  flex: 1;
+  min-width: 200px;
+}
+
+.audio-output-controls #audioFilePreview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e1e5e9;
+}
+
+.audio-output-controls #audioFileName {
+  flex: 1;
+  color: #333;
+  font-size: 14px;
+}
+
 .transcription-placeholder {
   text-align: center;
   color: #6c757d;

@@ -196,6 +196,34 @@ class BotService {
     return response.data;
   }
 
+  // Send audio output to bot
+  async sendBotAudioOutput(botId, audioBase64) {
+    console.log("🔊 SENDING AUDIO OUTPUT TO BOT:", botId);
+    console.log("📡 Request URL:", `${config.recallApiUrl}/bot/${botId}/output_audio/`);
+
+    const payload = {
+      kind: "mp3",
+      b64_data: audioBase64,
+    };
+
+    const response = await axios.post(
+      `${config.recallApiUrl}/bot/${botId}/output_audio/`,
+      payload,
+      {
+        headers: {
+          Authorization: `Token ${config.recallApiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log("✅ AUDIO OUTPUT SENT SUCCESSFULLY:");
+    console.log("📊 Response Status:", response.status);
+    console.log("📄 Response Data:", JSON.stringify(response.data, null, 2));
+
+    return response.data;
+  }
+
   // Process transcript data format
   processTranscriptData(event, transcriptData) {
     // Determine provider based on data structure

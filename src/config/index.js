@@ -12,9 +12,16 @@ const config = {
   // File upload configuration
   upload: {
     destination: "uploads",
-    maxFileSize: 5 * 1024 * 1024, // 5MB
-    allowedMimeTypes: ["image/jpeg", "image/jpg"],
+    maxFileSize: 10 * 1024 * 1024, // 10MB (increased for audio files)
+    allowedMimeTypes: ["image/jpeg", "image/jpg", "audio/mpeg", "audio/mp3"],
     filenamePrefix: "bot-image"
+  },
+  // Audio upload configuration
+  audioUpload: {
+    destination: "uploads",
+    maxFileSize: 10 * 1024 * 1024, // 10MB
+    allowedMimeTypes: ["audio/mpeg", "audio/mp3"],
+    filenamePrefix: "audio-file"
   },
   
   // Socket.io configuration
