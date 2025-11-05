@@ -72,17 +72,39 @@ export function TranscriptionApp() {
   const [showSaveTemplateDialog, setShowSaveTemplateDialog] = useState(false);
   const [templateName, setTemplateName] = useState("");
   const [sendingToN8n, setSendingToN8n] = useState(false);
+  const [usePolling, setUsePolling] = useState(false);
+  const [lastPollTimestamp, setLastPollTimestamp] = useState<string | null>(
+    null
+  );
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const transcriptionAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  // Initialize Socket.IO connection
+  // Initialize Socket.IO connection with polling fallback
   useEffect(() => {
-    const newSocket = io();
+    let socketConnected = false;
+    const newSocket = io({
+      reconnection: true,
+      reconnectionAttempts: 3,
+      reconnectionDelay: 1000,
+      timeout: 5000,
+    });
     setSocket(newSocket);
 
+    const connectTimeout = setTimeout(() => {
+      if (!socketConnected) {
+        console.log("Socket.IO connection timeout, falling back to polling");
+        setUsePolling(true);
+        newSocket.close();
+      }
+    }, 3000);
+
     newSocket.on("connect", () => {
-      console.log("Connected to server");
+      console.log("Connected to server via Socket.IO");
+      socketConnected = true;
+      clearTimeout(connectTimeout);
       setIsConnected(true);
+      setUsePolling(false);
       toast({
         title: "Conectado",
         description: "Conectado al servidor",
@@ -91,8 +113,13 @@ export function TranscriptionApp() {
 
     newSocket.on("disconnect", () => {
       console.log("Disconnected from server");
+      socketConnected = false;
       setIsConnected(false);
       setShowAudioPanel(false);
+      // Fallback to polling if disconnected
+      if (currentBotId) {
+        setUsePolling(true);
+      }
       toast({
         title: "Desconectado",
         description: "Desconectado del servidor",
@@ -144,9 +171,81 @@ export function TranscriptionApp() {
     });
 
     return () => {
+      clearTimeout(connectTimeout);
       newSocket.close();
     };
   }, [toast]);
+
+  // Polling fallback when Socket.IO is not available
+  useEffect(() => {
+    if (!usePolling || !currentBotId) {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const pollBot = async () => {
+      try {
+        const url = new URL(
+          `/api/bot/${currentBotId}/poll`,
+          window.location.origin
+        );
+        const currentTimestamp = lastPollTimestamp;
+        if (currentTimestamp) {
+          url.searchParams.append("lastTimestamp", currentTimestamp);
+        }
+
+        const response = await fetch(url.toString());
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        // Update bot status
+        if (data.bot) {
+          if (data.bot.status === "in_call") {
+            setIsConnected(true);
+            setShowAudioPanel(true);
+          } else if (data.bot.status === "call_ended") {
+            setIsConnected(false);
+            setShowAudioPanel(false);
+          }
+        }
+
+        // Process new interventions
+        if (data.interventions && data.interventions.length > 0) {
+          data.interventions.forEach((intervention: any) => {
+            setInterventions((prev) => {
+              const newId = Date.now().toString() + Math.random().toString();
+              const last = prev[prev.length - 1];
+              if (
+                last?.isPartial &&
+                last.participant.id === intervention.participant.id
+              ) {
+                return [...prev.slice(0, -1), { ...intervention, id: last.id }];
+              }
+              return [...prev, { ...intervention, id: newId }];
+            });
+          });
+          setLastPollTimestamp(data.lastTimestamp);
+        }
+      } catch (error) {
+        console.error("Error polling bot:", error);
+      }
+    };
+
+    // Poll immediately, then every 2 seconds
+    pollBot();
+    pollingIntervalRef.current = setInterval(pollBot, 2000);
+
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [usePolling, currentBotId, lastPollTimestamp]);
 
   // Load templates on mount
   useEffect(() => {
@@ -385,6 +484,11 @@ export function TranscriptionApp() {
         });
       } else {
         setCurrentBotId(data.botId);
+        setLastPollTimestamp(null); // Reset polling timestamp for new bot
+        // If Socket.IO not connected, enable polling
+        if (!isConnected) {
+          setUsePolling(true);
+        }
         toast({
           title: "Bot creado",
           description: "Bot creado exitosamente. Esperando conexión...",

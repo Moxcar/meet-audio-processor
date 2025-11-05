@@ -7,10 +7,7 @@ const nextConfig = {
       bodySizeLimit: '10mb',
     },
   },
-  // Deshabilitar Turbopack y usar webpack (más estable)
-  webpack: (config, { isServer }) => {
-    return config;
-  },
+  // Turbopack is default in Next 16; remove custom webpack config to avoid conflicts
   async rewrites() {
     return [
       {
