@@ -14,6 +14,7 @@ export async function POST(request: NextRequest) {
     const botName = (formData.get("botName") as string) || config.transcription.defaultBotName;
     const transcriptionType = (formData.get("transcriptionType") as string) || config.transcription.defaultType;
     const botPhotoFile = formData.get("botPhoto") as File | null;
+    const socketId = (formData.get("socketId") as string) || null;
 
     if (!meetingUrl) {
       return NextResponse.json(
@@ -80,6 +81,16 @@ export async function POST(request: NextRequest) {
       templateId: templateId || undefined,
     });
     const botId = botResponse.id;
+
+    // If socketId provided, register bot session to route events to this client
+    if (socketId) {
+      try {
+        botService.addBotSession(botId, socketId, meetingUrl, "created");
+        console.log(`🔗 Bot session registered: botId=${botId} -> socketId=${socketId}`);
+      } catch (e) {
+        console.error("Failed to register bot session with socketId:", e);
+      }
+    }
 
     // Clean up uploaded file
     if (tempFilePath) {

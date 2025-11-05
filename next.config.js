@@ -11,6 +11,14 @@ const nextConfig = {
   webpack: (config, { isServer }) => {
     return config;
   },
+  async rewrites() {
+    return [
+      {
+        source: '/webhook/transcription',
+        destination: '/api/webhook/transcription',
+      },
+    ];
+  },
 }
 
 module.exports = nextConfig

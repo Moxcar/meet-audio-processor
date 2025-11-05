@@ -250,13 +250,16 @@ export class SocketHandler {
   }
 }
 
-// Singleton instance
-let socketHandlerInstance: SocketHandler | null = null;
+// Ensure a single instance across HMR and different import contexts
+declare global {
+  // eslint-disable-next-line no-var
+  var __socketHandler__: SocketHandler | undefined;
+}
 
 export function getSocketHandler(): SocketHandler {
-  if (!socketHandlerInstance) {
-    socketHandlerInstance = new SocketHandler();
+  if (!globalThis.__socketHandler__) {
+    globalThis.__socketHandler__ = new SocketHandler();
   }
-  return socketHandlerInstance;
+  return globalThis.__socketHandler__;
 }
 

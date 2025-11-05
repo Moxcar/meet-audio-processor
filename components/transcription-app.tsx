@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,6 +71,7 @@ export function TranscriptionApp() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [showSaveTemplateDialog, setShowSaveTemplateDialog] = useState(false);
   const [templateName, setTemplateName] = useState("");
+  const [sendingToN8n, setSendingToN8n] = useState(false);
   const transcriptionAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -364,6 +366,9 @@ export function TranscriptionApp() {
       if (botPhoto) {
         formData.append("botPhoto", botPhoto);
       }
+      if (socket?.id) {
+        formData.append("socketId", socket.id);
+      }
 
       const response = await fetch("/api/bot/create-with-image", {
         method: "POST",
@@ -458,10 +463,59 @@ export function TranscriptionApp() {
     URL.revokeObjectURL(url);
   };
 
+  const handleSendToN8n = async () => {
+    if (!currentBotId) {
+      toast({
+        title: "Error",
+        description: "No hay bot activo para enviar",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setSendingToN8n(true);
+      const response = await fetch(`/api/bot/${currentBotId}/send-to-n8n`, {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        toast({
+          title: "Error",
+          description: data.error || data.details || "Error al enviar a n8n",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Éxito",
+          description: `Transcripción enviada a n8n exitosamente (${data.total_interventions} intervenciones)`,
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Error al enviar a n8n",
+        variant: "destructive",
+      });
+    } finally {
+      setSendingToN8n(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 to-blue-600 p-4">
       <div className="container mx-auto max-w-6xl">
         <header className="text-center mb-8 text-white">
+          <div className="flex items-center justify-between mb-4">
+            <Link
+              href="/sessions"
+              className="text-white hover:underline text-sm"
+            >
+              📚 Ver historial
+            </Link>
+          </div>
           <h1 className="text-4xl font-bold mb-2">🎤 Meet Audio Processor</h1>
           <p className="text-lg opacity-90">
             Transcripción en tiempo real de Google Meet
@@ -705,6 +759,18 @@ export function TranscriptionApp() {
                     onClick={downloadTranscript}
                   >
                     📥 Descargar
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={handleSendToN8n}
+                    disabled={
+                      sendingToN8n ||
+                      !currentBotId ||
+                      interventions.length === 0
+                    }
+                  >
+                    {sendingToN8n ? "Enviando..." : "📤 Enviar a n8n"}
                   </Button>
                 </div>
               </div>
